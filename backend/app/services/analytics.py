@@ -2,14 +2,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.curriculum import Subject, Subtopic, Topic
-from app.models.learning import QuestionAttempt, QuizAttempt, StudentMastery
+from app.models.learning import DiagnosticAssessment, DiagnosticAttempt, QuestionAttempt, QuizAttempt, StudentMastery
 
 
 def analytics_overview(database: Session, user_id: str) -> dict[str, object]:
     attempts = list(database.scalars(select(QuestionAttempt).join(QuizAttempt).where(QuizAttempt.user_id == user_id, QuizAttempt.submitted_at.is_not(None))))
-    questions_attempted = len(attempts)
-    correct_count = sum(bool(attempt.is_correct) for attempt in attempts)
-    response_times = [attempt.response_time_ms for attempt in attempts if attempt.response_time_ms is not None]
+    diagnostic_attempts = list(database.scalars(select(DiagnosticAttempt).join(DiagnosticAssessment).where(DiagnosticAssessment.user_id == user_id, DiagnosticAssessment.status == "completed")))
+    all_attempts = [*attempts, *diagnostic_attempts]
+    questions_attempted = len(all_attempts)
+    correct_count = sum(bool(attempt.is_correct) for attempt in all_attempts)
+    response_times = [attempt.response_time_ms for attempt in all_attempts if attempt.response_time_ms is not None]
     mastery = list(database.execute(select(StudentMastery, Subtopic, Topic, Subject).join(Subtopic, StudentMastery.subtopic_id == Subtopic.id).join(Topic, Subtopic.topic_id == Topic.id).join(Subject, Topic.subject_id == Subject.id).where(StudentMastery.user_id == user_id)).all())
     subject_scores: dict[str, list[float]] = {}
     topic_scores: dict[tuple[str, str], list[float]] = {}

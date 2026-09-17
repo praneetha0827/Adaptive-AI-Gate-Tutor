@@ -12,11 +12,20 @@ from app.services.gamification import progression_summary
 router = APIRouter(prefix="/progression", tags=["progression"])
 
 
+class BadgeResponse(BaseModel):
+    code: str
+    name: str
+    description: str
+
+
 class ProgressionResponse(BaseModel):
     total_xp: int
     level: int
     xp_to_next_level: int
     streak_days: int
+    daily_goal_completed: int
+    daily_goal_target: int
+    badges: list[BadgeResponse]
 
 
 @router.get("/summary", response_model=ProgressionResponse)

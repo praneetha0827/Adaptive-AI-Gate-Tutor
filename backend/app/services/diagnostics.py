@@ -1,24 +1,29 @@
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.curriculum import Subtopic, Subject, Topic
 from app.models.learning import DiagnosticAssessment, DiagnosticAttempt, DiagnosticStatus, Question
 from app.services.assessment import is_correct_answer
 from app.services.mastery import record_diagnostic_evidence
+from app.services.gamification import record_learning_activity
 
 
 def start_diagnostic(database: Session, user_id: str, curriculum_version_id: str, question_limit: int) -> tuple[DiagnosticAssessment, list[Question]]:
-    questions = list(database.scalars(
+    base_query = (
         select(Question)
         .join(Subtopic, Question.subtopic_id == Subtopic.id)
         .join(Topic, Subtopic.topic_id == Topic.id)
         .join(Subject, Topic.subject_id == Subject.id)
         .where(Subject.curriculum_version_id == curriculum_version_id, Question.is_active, Question.is_diagnostic_eligible)
-        .limit(question_limit)
-    ))
+    )
+    answered_question_ids = select(DiagnosticAttempt.question_id).join(DiagnosticAssessment).where(DiagnosticAssessment.user_id == user_id, DiagnosticAssessment.status == DiagnosticStatus.COMPLETED)
+    questions = list(database.scalars(base_query.where(Question.id.not_in(answered_question_ids)).order_by(func.random()).limit(question_limit)))
+    if len(questions) < question_limit:
+        selected_ids = [question.id for question in questions]
+        questions.extend(database.scalars(base_query.where(Question.id.not_in(selected_ids)).order_by(func.random()).limit(question_limit - len(questions))))
     if len(questions) < 5:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Diagnostic question bank is not ready for this curriculum version")
     assessment = DiagnosticAssessment(user_id=user_id, curriculum_version_id=curriculum_version_id)
@@ -41,6 +46,7 @@ def submit_diagnostic(database: Session, user_id: str, assessment_id: str, answe
     questions = {question.id: question for question in database.scalars(select(Question).where(Question.id.in_(attempts_by_question)))}
     if set(question_id for question_id, _, _ in answers) != set(attempts_by_question):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Submit one answer for every diagnostic question")
+    correct_count = 0
     for question_id, answer, response_time_ms in answers:
         attempt = attempts_by_question[question_id]
         question = questions[question_id]
@@ -50,8 +56,10 @@ def submit_diagnostic(database: Session, user_id: str, assessment_id: str, answe
         attempt.is_correct = is_correct
         attempt.answered_at = datetime.now(UTC)
         record_diagnostic_evidence(database, user_id, question.subtopic_id, is_correct, response_time_ms)
+        correct_count += int(is_correct)
     assessment.status = DiagnosticStatus.COMPLETED
     assessment.completed_at = datetime.now(UTC)
+    record_learning_activity(database, user_id, "diagnostic", assessment.id, len(answers), correct_count)
     database.commit()
     database.refresh(assessment)
     return assessment

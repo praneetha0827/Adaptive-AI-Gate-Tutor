@@ -15,7 +15,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, database: Annotated[Session, Depends(get_db)]) -> UserResponse:
     try:
-        return register_user(database, payload.email, payload.password)
+        user = register_user(database, payload.email, payload.password)
+        return UserResponse(id=user.id, email=user.email, is_active=user.is_active, onboarding_completed=False)
     except EmailAlreadyRegisteredError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email is already registered") from error
 
@@ -26,4 +27,3 @@ def login(payload: LoginRequest, database: Annotated[Session, Depends(get_db)]) 
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     return TokenResponse(access_token=create_access_token(user.id))
-
